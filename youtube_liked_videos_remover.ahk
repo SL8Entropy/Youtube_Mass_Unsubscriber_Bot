@@ -2,96 +2,140 @@
 ; Auto-Clicker with Color Search (AutoHotkey v2) - Updated
 ;
 ; DESCRIPTION:
-; This script loops through two actions:
-; 1. A standard click at a fixed position.
-; 2. A dynamic click that first searches upwards for a specific color.
-; If the color search fails, it waits 10 seconds and retries the entire loop.
+; This script loops through two actions: a fixed click and a dynamic color search.
+; If the color search fails 5 times in a row, it refreshes the page (Ctrl+R)
+; and performs a second color search before continuing.
 ;
 ; HOTKEYS:
 ;   - F1: Starts the clicking loop.
 ;   - F2: Stops the clicking loop at any time.
 ; =================================================================================
 
-#SingleInstance Force 
-#Warn               
+#SingleInstance Force
+#Warn
 
 ; --- SETTINGS ---
 ; --- First Click (Fixed Position) ---
 Click1_X := 1850
 Click1_Y := 410
 
-; --- Second Click (Color Search) ---
-Search2_StartX := 1850         ; X-coordinate to start the search.
-Search2_StartY := 740          ; Y-coordinate to start the search.
-Target2_Color  := 0x3E3E3E      ; The color to find (in BGR format).
-Search2_Step   := 5            ; How many pixels to move up each step.
-Search2_LimitY := 410          ; Failsafe: The highest Y-coordinate to search to.
+; --- Second Click (Main Color Search) ---
+Search2_StartX := 1850
+Search2_StartY := 740
+Target2_Color  := 0x3E3E3E
+Search2_Step   := 10
+Search2_LimitY := 410 ;
 
-sleepAmount := 250             ; Delay in milliseconds after each click.
-failSleep := 250 ; Delay in milliseconds if fail
-; --- A global variable to control whether the loop should run ---
+; --- Refresh Action (after 5 failures) ---
+RefreshSearch_StartX := 1844         ; X-coord to start searching after a refresh.
+RefreshSearch_StartY := 330          ; Y-coord to start searching after a refresh.
+RefreshTarget_Color  := 0x525252      ; The new color to find after a refresh.
+RefreshSearch_Step   := 5            ; Pixels to move up each step.
+RefreshSearch_LimitY := 50           ; Failsafe limit for the refresh search.
+
+; --- Delays ---
+sleepAmount    := 250
+failRetrySleep := 250
+
+; --- A global variable to control the loop ---
 global KeepLooping := false
 
-; --- F1 Hotkey: This is the "Start" button ---
+; --- F1 Hotkey: "Start" ---
 F1::
 {
-    global KeepLooping 
+    global KeepLooping
+    local consecutiveFails := 0
     ToolTip("Clicking loop STARTED.")
     KeepLooping := true
 
     Loop
     {
         if !KeepLooping
-            break 
+            break
 
-        ; --- Action 1: Perform the first, fixed click ---
         Click(Click1_X, Click1_Y)
-        Sleep(sleepAmount) 
+        Sleep(sleepAmount)
 
         if !KeepLooping
             break
 
-        ; --- Action 2: Search for the color for the second click ---
         MouseMove(Search2_StartX, Search2_StartY, 0)
-        local colorFound := false ; This flag tracks if the search was successful.
+        local colorFound := false
 
-        Loop ; This is the inner "search loop".
+        Loop ; Inner "search loop" for Action 2
         {
             if !KeepLooping
                 break
 
             MouseGetPos(&currentX, &currentY)
 
-            ; Condition 1: The target color is found.
             if (PixelGetColor(currentX, currentY) == Target2_Color)
             {
-                colorFound := true ; Set the flag to true.
-                break              ; Exit the search loop to perform the click.
+                colorFound := true
+                break
             }
-            
-            ; Condition 2: Failsafe limit is reached without finding the color.
+
             if (currentY <= Search2_LimitY)
             {
-                ToolTip("Color not found. Retrying in 10 seconds...")
-                SetTimer(() => ToolTip(), -2000) ; Show message for 2 seconds.
-                Sleep(failSleep)                     ; << NEW: Wait for 10 seconds.
-                break                            ; Exit the search loop. colorFound remains false.
+                ToolTip("Color not found. Retrying...")
+                SetTimer(() => ToolTip(), -1500)
+                Sleep(failRetrySleep)
+                break
             }
-            
+
             MouseMove(currentX, currentY - Search2_Step, 0)
-            Sleep(20) 
+            Sleep(20)
         }
 
         if !KeepLooping
             break
 
-        ; << NEW: If color was not found, skip the click and restart the main loop.
         if !colorFound
-            continue
+        {
+            consecutiveFails++
+            ToolTip("Consecutive failures: " . consecutiveFails)
+            SetTimer(() => ToolTip(), -1500)
 
-        ; If we get here, the color was found. Click at its location.
+            if (consecutiveFails >= 5)
+            {
+                ToolTip("5 failures reached. Refreshing page...")
+                Send("^r") ; Press Ctrl+R
+                Sleep(3000) ; Wait for page to refresh
+
+                ; << NEW: Start searching for the post-refresh button >>
+                MouseMove(RefreshSearch_StartX, RefreshSearch_StartY, 0)
+                Loop
+                {
+                    if !KeepLooping
+                        break 2 ; Break out of this search and the parent 'if' block
+
+                    MouseGetPos(&rx, &ry)
+
+                    if (PixelGetColor(rx, ry) == RefreshTarget_Color)
+                        break ; Color found, exit this search loop
+
+                    if (ry <= RefreshSearch_LimitY)
+                    {
+                        ToolTip("Post-refresh color search FAILED. Retrying main loop.")
+                        SetTimer(() => ToolTip(), -2000)
+                        break ; Failsafe for this inner search
+                    }
+                    MouseMove(rx, ry - RefreshSearch_Step, 0)
+                    Sleep(20)
+                }
+                
+                if (KeepLooping)
+                    Click() ; Click if the refresh-search was successful
+                    
+                Sleep(1000)
+                consecutiveFails := 0
+            }
+            continue
+        }
+
         Click()
         Sleep(sleepAmount)
+        consecutiveFails := 0
     }
 
     if (A_PriorHotkey == "F2")
@@ -101,7 +145,7 @@ F1::
     }
 }
 
-; --- F2 Hotkey: This is the "Stop" button ---
+; --- F2 Hotkey: "Stop" ---
 F2::
 {
     global KeepLooping
